@@ -20,8 +20,6 @@ import {
 	initPostIdMap,
 } from "@utils/permalink-utils";
 import { Icon } from "astro-icon/components";
-import dayjs from "dayjs";
-import utc from "dayjs/plugin/utc";
 import { licenseConfig, permalinkConfig, shareConfig } from "src/config";
 import ImageWrapper from "../../components/misc/ImageWrapper.astro";
 import PostMetadata from "../../components/PostMeta.astro";
@@ -158,10 +156,19 @@ if (profileConfig.avatar) {
 // 判断是否为加密文章
 let isEncrypted = entry.data.encrypted && entry.data.password;
 
-dayjs.extend(utc);
-const lastModified = dayjs(entry.data.updated || entry.data.published)
-	.utc()
-	.format("YYYY-MM-DDTHH:mm:ss");
+const publishedTimeIso = new Date(entry.data.published).toISOString();
+const modifiedTimeIso = (entry.data.updated
+	? new Date(entry.data.updated)
+	: new Date(entry.data.published)
+).toISOString();
+
+// 用于 og:image / twitter:image 与 JSON-LD：仅使用绝对 HTTP(S) 或站点相对路径转绝对 URL（不用 data URL）
+let articleOgImageUrl: string | undefined;
+if (posterCoverUrl && (posterCoverUrl.startsWith("http") || posterCoverUrl.startsWith("/"))) {
+	articleOgImageUrl = posterCoverUrl.startsWith("http")
+		? posterCoverUrl
+		: new URL(posterCoverUrl, Astro.site).toString();
+}
 
 const jsonLd = {
 	"@context": "https://schema.org",
@@ -169,16 +176,26 @@ const jsonLd = {
 	headline: entry.data.title,
 	description: entry.data.description || entry.data.title,
 	keywords: entry.data.tags,
+	image: articleOgImageUrl ? [articleOgImageUrl] : undefined,
 	author: {
 		"@type": "Person",
 		name: profileConfig.name,
 		url: Astro.site,
 	},
-	datePublished: formatDateToYYYYMMDD(entry.data.published),
+	publisher: {
+		"@type": "Organization",
+		name: siteConfig.title,
+		url: Astro.site?.toString?.() ?? siteConfig.siteURL,
+	},
+	mainEntityOfPage: {
+		"@type": "WebPage",
+		"@id": Astro.url.toString(),
+	},
+	datePublished: publishedTimeIso,
+	dateModified: modifiedTimeIso,
 	inLanguage: entry.data.lang
 		? entry.data.lang.replace("_", "-")
 		: siteConfig.lang.replace("_", "-"),
-	// TODO include cover image here
 };
 ---
 
@@ -190,6 +207,10 @@ const jsonLd = {
     setOGTypeArticle={true}
     postSlug={entry.id}
     headings={headings}
+    image={articleOgImageUrl}
+    canonicalUrl={Astro.url.toString()}
+    publishedTime={publishedTimeIso}
+    modifiedTime={modifiedTimeIso}
 >
     <script is:inline slot="head" type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
     <!-- 引入右侧边栏布局管理器 -->
@@ -366,7 +387,7 @@ const jsonLd = {
         <>
             <div
                 id="last-modified"
-                data-last-modified={lastModified}
+                data-last-modified={modifiedTimeIso}
                 data-prefix={i18n(I18nKey.lastModifiedPrefix)}
                 data-year={i18n(I18nKey.year)}
                 data-month={i18n(I18nKey.month)}
